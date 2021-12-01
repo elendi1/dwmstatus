@@ -17,9 +17,7 @@
 
 #include <X11/Xlib.h>
 
-char *tzargentina = "America/Buenos_Aires";
-char *tzutc = "UTC";
-char *tzberlin = "Europe/Berlin";
+char *tzrome = "Europe/Rome";
 
 static Display *dpy;
 
@@ -176,47 +174,74 @@ gettemperature(char *base, char *sensor)
 }
 
 int
+parse_netdev(unsigned long long int *receivedabs, unsigned long long int *sentabs)
+{
+	char buf[255];
+	char *datastart;
+	static int bufsize;
+	int rval;
+	FILE *devfd;
+	unsigned long long int receivedacc, sentacc;
+
+	*receivedabs = 0;
+	*sentabs = 0;
+
+	bufsize = 255;
+	devfd = fopen("/proc/net/dev", "r");
+	rval = 1;
+
+	// Ignore the first two lines of the file
+	fgets(buf, bufsize, devfd);
+	fgets(buf, bufsize, devfd);
+
+	while (fgets(buf, bufsize, devfd)) {
+	    if ((datastart = strstr(buf, "lo:")) == NULL) {
+		datastart = strstr(buf, ":");
+
+		// With thanks to the conky project at http://conky.sourceforge.net/
+		sscanf(datastart + 1, "%llu  %*d     %*d  %*d  %*d  %*d   %*d        %*d       %llu",\
+		       &receivedacc, &sentacc);
+		*receivedabs += receivedacc;
+		*sentabs += sentacc;
+		rval = 0;
+	    }
+	}
+
+	fclose(devfd);
+	return rval;
+}
+
+int
 main(void)
 {
 	char *status;
 	char *avgs;
-	char *bat;
-	char *bat1;
-	char *tmar;
-	char *tmutc;
-	char *tmbln;
-	char *t0, *t1, *t2;
+	char *time;
+	unsigned long long int received;
+	unsigned long long int sent;
+	unsigned int counter;
 
 	if (!(dpy = XOpenDisplay(NULL))) {
 		fprintf(stderr, "dwmstatus: cannot open display.\n");
 		return 1;
 	}
 
-	for (;;sleep(60)) {
+	for (counter = 0;;sleep(1), counter++) {
+		/*
+		if ((counter % 60) == 0) {
+			avgs = loadavg();
+		}
+		*/
 		avgs = loadavg();
-		bat = getbattery("/sys/class/power_supply/BAT0");
-		bat1 = getbattery("/sys/class/power_supply/BAT1");
-		tmar = mktimes("%H:%M", tzargentina);
-		tmutc = mktimes("%H:%M", tzutc);
-		tmbln = mktimes("KW %W %a %d %b %H:%M %Z %Y", tzberlin);
-		t0 = gettemperature("/sys/devices/virtual/hwmon/hwmon0", "temp1_input");
-		t1 = gettemperature("/sys/devices/virtual/hwmon/hwmon2", "temp1_input");
-		t2 = gettemperature("/sys/devices/virtual/hwmon/hwmon4", "temp1_input");
 
-		status = smprintf("T:%s|%s|%s L:%s B:%s|%s A:%s U:%s %s",
-				t0, t1, t2, avgs, bat, bat1, tmar, tmutc,
-				tmbln);
+		time = mktimes("Week %W  %a %d %b %Y  %H:%M ", tzrome);
+		parse_netdev(&received, &sent);
+
+		status = smprintf(" %.2fMB   %.2fMB   %s  %s", received / 1048576.0 , sent / 1048576.0, avgs, time);
 		setstatus(status);
 
-		free(t0);
-		free(t1);
-		free(t2);
 		free(avgs);
-		free(bat);
-		free(bat1);
-		free(tmar);
-		free(tmutc);
-		free(tmbln);
+		free(time);
 		free(status);
 	}
 
