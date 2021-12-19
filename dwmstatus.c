@@ -212,35 +212,68 @@ parse_netdev(unsigned long long int *receivedabs, unsigned long long int *sentab
 }
 
 int
+parse_procstat(unsigned long long int *proctime, unsigned long long int *idletime)
+{
+	char buf[255];
+	FILE *devfd;
+  unsigned long long int times[9];
+  int i;
+
+	devfd = fopen("/proc/stat", "r");
+
+  if (fgets(buf, sizeof(buf), devfd) == NULL) {
+    return 1;
+  }
+
+  sscanf(buf, "cpu  %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu",
+          &times[0], &times[1], &times[2], idletime, &times[3], &times[4], &times[5], &times[6], &times[7], &times[8]);
+
+  for (i = 0, *proctime = 0; i < 9; i++) {
+    *proctime += times[i];
+  }
+
+
+	fclose(devfd);
+	return 0;
+}
+
+int
 main(void)
 {
 	char *status;
-	char *avgs;
+	//char *avgs;
 	char *time;
+	unsigned int counter;
 	unsigned long long int received;
 	unsigned long long int sent;
-	unsigned int counter;
+  unsigned long long int proctime1;
+  unsigned long long int proctime2;
+  unsigned long long int idletime1;
+  unsigned long long int idletime2;
+  double cpu;
 
 	if (!(dpy = XOpenDisplay(NULL))) {
 		fprintf(stderr, "dwmstatus: cannot open display.\n");
 		return 1;
 	}
 
-	for (counter = 0;;sleep(1), counter++) {
-		/*
-		if ((counter % 60) == 0) {
-			avgs = loadavg();
-		}
-		*/
-		avgs = loadavg();
+  proctime1 = 0;
+  idletime1 = 0;
 
-		time = mktimes("Week %W  %a %d %b %Y  %H:%M ", tzrome);
+	for (counter = 0;;sleep(1), counter++) {
+		time = mktimes(" Week %W  %a %d %b %Y  %H:%M ", tzrome);
 		parse_netdev(&received, &sent);
 
-		status = smprintf(" %.2fMB   %.2fMB   %s  %s", received / 1048576.0 , sent / 1048576.0, avgs, time);
+    if ((counter % 5) == 0) {
+      parse_procstat(&proctime2, &idletime2);
+      cpu = ((double)(proctime2 - proctime1)/(double)(idletime2 - idletime1)) * 100;
+      proctime1 = proctime2;
+      idletime1 = idletime2;
+    }
+
+		status = smprintf(" %.2fMB   %.2fMB   %.2f%  %s", received / 1048576.0 , sent / 1048576.0, cpu, time);
 		setstatus(status);
 
-		free(avgs);
 		free(time);
 		free(status);
 	}
