@@ -14,6 +14,7 @@
 #include <time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/statvfs.h>
 
 #include <X11/Xlib.h>
 
@@ -162,19 +163,20 @@ getbattery(char *base)
 	return smprintf("%.0f%%%c", ((float)remcap / (float)descap) * 100, status);
 }
 
-char *
+float 
 gettemperature(char *base, char *sensor)
 {
 	char *co;
 
 	co = readfile(base, sensor);
 	if (co == NULL)
-		return smprintf("");
-	return smprintf("%02.0f°C", atof(co) / 1000);
+		return 0.0;
+
+	return atof(co) / 1000;
 }
 
 int
-parse_netdev(unsigned long long int *receivedabs, unsigned long long int *sentabs)
+parse_proc_net_dev(unsigned long long int *receivedabs, unsigned long long int *sentabs)
 {
 	char buf[255];
 	char *datastart;
@@ -195,16 +197,16 @@ parse_netdev(unsigned long long int *receivedabs, unsigned long long int *sentab
 	fgets(buf, bufsize, devfd);
 
 	while (fgets(buf, bufsize, devfd)) {
-	    if ((datastart = strstr(buf, "lo:")) == NULL) {
+			if ((datastart = strstr(buf, "lo:")) == NULL) {
 		datastart = strstr(buf, ":");
 
 		// With thanks to the conky project at http://conky.sourceforge.net/
-		sscanf(datastart + 1, "%llu  %*d     %*d  %*d  %*d  %*d   %*d        %*d       %llu",\
-		       &receivedacc, &sentacc);
+		sscanf(datastart + 1, "%llu	 %*d		 %*d	%*d	 %*d	%*d		%*d				 %*d			 %llu",\
+					 &receivedacc, &sentacc);
 		*receivedabs += receivedacc;
 		*sentabs += sentacc;
 		rval = 0;
-	    }
+			}
 	}
 
 	fclose(devfd);
@@ -212,29 +214,73 @@ parse_netdev(unsigned long long int *receivedabs, unsigned long long int *sentab
 }
 
 int
-parse_procstat(unsigned long long int *proctime, unsigned long long int *idletime)
+parse_proc_stat(unsigned long long int *proctime, unsigned long long int *idletime)
 {
 	char buf[255];
 	FILE *devfd;
-  unsigned long long int times[9];
-  int i;
+	unsigned long long int times[9];
+	int i;
 
 	devfd = fopen("/proc/stat", "r");
 
-  if (fgets(buf, sizeof(buf), devfd) == NULL) {
-    return 1;
-  }
+	if (fgets(buf, sizeof(buf), devfd) == NULL) {
+		return 1;
+	}
 
-  sscanf(buf, "cpu  %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu",
-          &times[0], &times[1], &times[2], idletime, &times[3], &times[4], &times[5], &times[6], &times[7], &times[8]);
+	sscanf(buf, "cpu	%llu %llu %llu %llu %llu %llu %llu %llu %llu %llu",
+					&times[0], &times[1], &times[2], idletime, &times[3], &times[4], &times[5], &times[6], &times[7], &times[8]);
 
-  for (i = 0, *proctime = 0; i < 9; i++) {
-    *proctime += times[i];
-  }
+	for (i = 0, *proctime = 0; i < 9; i++) {
+		*proctime += times[i];
+	}
 
 
 	fclose(devfd);
 	return 0;
+}
+
+int
+parse_proc_meminfo(unsigned long long int *totalmem, unsigned long long int *usedmem)
+{
+	char buf[255];
+	FILE *devfd;
+	unsigned long long int availmem;
+
+	devfd = fopen("/proc/meminfo", "r");
+
+	if (fgets(buf, sizeof(buf), devfd) == NULL) {
+		return 1;
+	}
+
+	sscanf(buf, "MemTotal:       %llu kB", totalmem);
+
+	if (fgets(buf, sizeof(buf), devfd) == NULL) {
+		return 1;
+	}
+  
+	if (fgets(buf, sizeof(buf), devfd) == NULL) {
+		return 1;
+	}
+
+	sscanf(buf, "MemAvailable:   %llu kB", &availmem);
+
+  *usedmem = *totalmem - availmem;
+
+	fclose(devfd);
+	return 0;
+}
+
+void
+get_freespace(unsigned long long int *totaldisk, unsigned long long int *useddisk) {
+    struct statvfs data;
+
+    if ( (statvfs("/", &data)) < 0) {
+		  fprintf(stderr, "can't get info on disk.\n");
+		  return;
+    }
+
+    *totaldisk = data.f_blocks * data.f_frsize;
+    *useddisk = (data.f_blocks - data.f_bfree) * data.f_frsize;
 }
 
 int
@@ -246,32 +292,45 @@ main(void)
 	unsigned int counter;
 	unsigned long long int received;
 	unsigned long long int sent;
-  unsigned long long int proctime1;
-  unsigned long long int proctime2;
-  unsigned long long int idletime1;
-  unsigned long long int idletime2;
-  double cpu;
+	unsigned long long int proctime1;
+	unsigned long long int proctime2;
+	unsigned long long int idletime1;
+	unsigned long long int idletime2;
+	unsigned long long int totalmem;
+	unsigned long long int usedmem;
+	unsigned long long int totaldisk;
+	unsigned long long int useddisk;
+	double cpu;
+  float cputemp;
 
 	if (!(dpy = XOpenDisplay(NULL))) {
 		fprintf(stderr, "dwmstatus: cannot open display.\n");
 		return 1;
 	}
 
-  proctime1 = 0;
-  idletime1 = 0;
+	proctime1 = 0;
+	idletime1 = 0;
 
-	for (counter = 0;;sleep(1), counter++) {
-		time = mktimes(" Week %W  %a %d %b %Y  %H:%M ", tzrome);
-		parse_netdev(&received, &sent);
+	for (counter = 0;; sleep(1), counter++) {
+		time = mktimes(" %a %d %b %Y  %H:%M ", tzrome);
+		parse_proc_net_dev(&received, &sent);
 
-    if ((counter % 5) == 0) {
-      parse_procstat(&proctime2, &idletime2);
-      cpu = ((double)(proctime2 - proctime1)/(double)(idletime2 - idletime1)) * 100;
-      proctime1 = proctime2;
-      idletime1 = idletime2;
-    }
+		if ((counter % 5) == 0) {
+			parse_proc_stat(&proctime2, &idletime2);
+			cpu = ((double)(proctime2 - proctime1)/(double)(idletime2 - idletime1)) * 100;
+			proctime1 = proctime2;
+			idletime1 = idletime2;
 
-		status = smprintf(" %.2fMB   %.2fMB   %.2f%  %s", received / 1048576.0 , sent / 1048576.0, cpu, time);
+      parse_proc_meminfo(&totalmem, &usedmem);
+
+      cputemp = gettemperature("/sys/class/hwmon/hwmon0", "temp1_input");
+		}
+
+		if ((counter % 600) == 0) {
+      get_freespace(&totaldisk, &useddisk);
+		}
+
+		status = smprintf("  %.2fMB  %.2fMB   %.2f%   %02.2f°C   %.2fGB/%.2fGB   %.2fGB/%.2fGB  %s", received / 1048576.0 , sent / 1048576.0, cpu, cputemp, usedmem / 1048576.0, totalmem / 1048576.0, useddisk / 1073741824.0, totaldisk / 1073741824.0, time);
 		setstatus(status);
 
 		free(time);
