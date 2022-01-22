@@ -330,7 +330,7 @@ main(void)
       get_freespace(&totaldisk, &useddisk);
 		}
 
-		status = smprintf("  %.2fMB  %.2fMB   %.2f%   %02.2f°C   %.2fGB/%.2fGB   %.2fGB/%.2fGB  %s", received / 1048576.0 , sent / 1048576.0, cpu, cputemp, usedmem / 1048576.0, totalmem / 1048576.0, useddisk / 1073741824.0, totaldisk / 1073741824.0, time);
+		status = smprintf("^b#1a1b26^^c#24283b^\ue0b2^c#73daca^^b#24283b^  %.2fMB  %.2fMB ^c#1a1b26^\ue0b2^c#7aa2f7^^b#1a1b26^  %.2f% ^c#24283b^\ue0b2^c#bb9af7^^b#24283b^  %02.2f°C ^c#1a1b26^\ue0b2^c#9ece6a^^b#1a1b26^  %.2fGB/%.2fGB ^c#24283b^\ue0b2^c#e0af78^^b#24283b^  %.2fGB/%.2fGB ^c#1a1b26^\ue0b2^c#2ac3ce^^b#1a1b26^ %s", received / 1048576.0 , sent / 1048576.0, cpu, cputemp, usedmem / 1048576.0, totalmem / 1048576.0, useddisk / 1073741824.0, totaldisk / 1073741824.0, time);
 		setstatus(status);
 
 		free(time);
